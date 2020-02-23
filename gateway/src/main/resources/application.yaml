@@ -1,0 +1,77 @@
+
+spring:
+  application:
+    name: api-gateway
+  redis:
+    password: 88888
+    port: 6379
+    host: 127.0.0.1
+    database: 0
+    jedis:
+      pool:
+        max-active: 10
+        max-wait: -1
+        max-idle: 6
+        min-idle: 0
+    timeout: 10000
+  cloud:
+    nacos:
+      discovery:
+        server-addr: nacos.didispace.com:80
+    # sring cloud路由配置
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+      routes:
+      - id: user-service-id
+        uri: lb://user-service
+        predicates:
+        - Path= /user/**
+
+
+server:
+  port: 1112
+
+hystrix:
+  command:
+    default:
+      execution:
+        isolation:
+          thread:
+            timeoutInMilliseconds: 20000
+            strategy: THREAD
+    testHystrixCommandApi:
+      execution:
+        isolation:
+          thread:
+            timeoutInMilliseconds: 1000
+
+auth:
+  loginMethods: '
+    seller.user.pwd.login:seller.user
+  '
+  authExcludeMethods: '
+    auth.callback
+  '
+  serviceExpiredExcludeMethods: '
+    seller.user.get
+  '
+  unauthorizedPrompt: 未登录或已登录失效
+
+ribbon:
+  ConnectionTimeout: 10000
+  MaxConnectionsPerHost: 10
+  MaxAutoRetries: 5
+  MaxTotalHttpConnections: 20
+  MaxAutoRetriesNextServer: 1
+  ReadTimeout: 10000
+
+logging:
+  file: ~/logs/api-gateway.log
+  level:
+    com:
+      my: DEBUG
+    org:
+      springframework:
+        web: INFO
