@@ -9,7 +9,9 @@ public class AuthorizedConstant {
 
     public static final String AUTH_HEADER_NAME = "Authorization";
 
-    public static final String SECRET = "secret";
+    public static final String SECRET = "auth";
 
     public static final String PRINCIPAL_NAME = "username";
+
+    public static final String HASH_CLAIMS = "hash";
 }

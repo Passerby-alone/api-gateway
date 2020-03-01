@@ -7,5 +7,5 @@ package com.my.project.constants;
  */
 public class RedisConstant {
 
-    public static final String SESSION_REDIS_PREFIX = "session$";
+    public static final String SESSION_REDIS_PREFIX = "Jwt:session:";
 }

@@ -6,8 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.CachingConfigurerSupport;
@@ -17,11 +17,18 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
 import org.springframework.data.redis.cache.RedisCacheManager;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.RedisPassword;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.jedis.JedisClientConfiguration;
 import org.springframework.data.redis.connection.jedis.JedisConnectionFactory;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
+import redis.clients.jedis.JedisPoolConfig;
 
 import java.time.Duration;
 
@@ -36,7 +43,7 @@ import java.time.Duration;
 public class RedisConfiguration extends CachingConfigurerSupport {
 
     @Autowired
-    private JedisConnectionFactory jedisConnectionFactory;
+    private RedisConnectionFactory redisConnectionFactory;
 
     @Bean
     @Override
@@ -60,7 +67,7 @@ public class RedisConfiguration extends CachingConfigurerSupport {
     public CacheManager cacheManager() {
 
         RedisCacheManager redisCacheManager = RedisCacheManager.RedisCacheManagerBuilder
-                                                                        .fromConnectionFactory(jedisConnectionFactory)
+                                                                        .fromConnectionFactory(redisConnectionFactory)
                                                                         .cacheDefaults(RedisCacheConfiguration.defaultCacheConfig().entryTtl(Duration.ofDays(7)))
                                                                         .build();
         return redisCacheManager;
@@ -68,57 +75,16 @@ public class RedisConfiguration extends CachingConfigurerSupport {
 
     @Bean
     public RedisTemplate<String, Object> redisTemplate() {
-        // 设置序列化
-        Jackson2JsonRedisSerializer jackson2JsonRedisSerializer = new Jackson2JsonRedisSerializer(Object.class);
-        ObjectMapper objectMapper = new ObjectMapper();
-        objectMapper.setVisibility(PropertyAccessor.ALL, JsonAutoDetect.Visibility.ANY);
-        objectMapper.enableDefaultTyping(ObjectMapper.DefaultTyping.NON_FINAL);
-        jackson2JsonRedisSerializer.setObjectMapper(objectMapper);
         // 配置redisTemplate
         RedisTemplate<String, Object> redisTemplate = new RedisTemplate<>();
-        redisTemplate.setConnectionFactory(jedisConnectionFactory);
-        RedisSerializer stringSerializer = new StringRedisSerializer();
+        redisTemplate.setConnectionFactory(redisConnectionFactory);
         // key序列化
-        redisTemplate.setKeySerializer(stringSerializer);
-        // value序列化
-        redisTemplate.setValueSerializer(jackson2JsonRedisSerializer);
-        // Hash key序列化
-        redisTemplate.setHashKeySerializer(stringSerializer);
-        // Hash value序列化
-        redisTemplate.setHashValueSerializer(jackson2JsonRedisSerializer);
-        redisTemplate.afterPropertiesSet();
+        redisTemplate.setKeySerializer(new StringRedisSerializer());
+        redisTemplate.setHashKeySerializer(new StringRedisSerializer());
+        redisTemplate.setStringSerializer(new StringRedisSerializer());
+        redisTemplate.setValueSerializer(new GenericJackson2JsonRedisSerializer());
+        redisTemplate.setHashValueSerializer(new GenericJackson2JsonRedisSerializer());
         return redisTemplate;
     }
 
-    @ConfigurationProperties
-    class JedisProperties {
-        @Value("${spring.redis.host}")
-        private String host;
-        @Value("${spring.redis.password}")
-        private String password;
-        @Value("${spring.redis.port}")
-        private int port;
-        @Value("${spring.redis.timeout}")
-        private int timeout;
-        @Value("${spring.redis.jedis.pool.max-idle}")
-        private int maxIdle;
-        @Value("${spring.redis.jedis.pool.max-wait}")
-        private long maxWaitMillis;
-
-        @Bean
-        @Primary
-        @ConditionalOnMissingBean({JedisConnectionFactory.class})
-        JedisConnectionFactory jedisConnectionFactory() {
-            JedisConnectionFactory jedisConnectionFactory = new JedisConnectionFactory();
-            jedisConnectionFactory.setHostName(host);
-            if ( null != password) {
-                jedisConnectionFactory.setPassword(password);
-            }
-            jedisConnectionFactory.setPort(port);
-            jedisConnectionFactory.setUsePool(true);
-            jedisConnectionFactory.setTimeout(timeout);
-            log.info("create jedisConnectionFactory success");
-            return jedisConnectionFactory;
-        }
-    }
 }

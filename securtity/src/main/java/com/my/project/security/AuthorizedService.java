@@ -9,12 +9,11 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
-import org.springframework.stereotype.Component;
+import org.springframework.util.DigestUtils;
 
 import java.util.Collections;
 
@@ -23,12 +22,16 @@ import java.util.Collections;
  * @description TODO
  * @date 2020/2/23 下午8:01
  */
-@Component
 @Slf4j
 public class AuthorizedService {
 
-    @Autowired
+    private static final Long USER_EXPIRED_TIME = 5 * 60 * 60 * 1000L;
+
     private RedisTemplate redisTemplate;
+
+    public AuthorizedService(RedisTemplate redisTemplate) {
+        this.redisTemplate = redisTemplate;
+    }
 
     public boolean checkAuthorized(ServerHttpRequest request) {
 
@@ -50,7 +53,8 @@ public class AuthorizedService {
         if (claims.containsKey(AuthorizedConstant.PRINCIPAL_NAME)) {
 
             String username = claims.get(AuthorizedConstant.PRINCIPAL_NAME).toString();
-            Object value = redisTemplate.opsForValue().get(RedisConstant.SESSION_REDIS_PREFIX + username);
+            String hash = claims.get(AuthorizedConstant.HASH_CLAIMS).toString();
+            Object value = redisTemplate.opsForValue().get(RedisConstant.SESSION_REDIS_PREFIX + String.format("%s:%s", username.toLowerCase(), hash));
 
             if (null == value) {
                 return null;
@@ -72,9 +76,14 @@ public class AuthorizedService {
 
     public static Claims parseJWT(String token) {
 
-        Claims claims = Jwts.parser()
-                            .setSigningKey(AuthorizedConstant.SECRET)
-                            .parseClaimsJws(token).getBody();
+        Claims claims = null;
+        try {
+            claims = Jwts.parser()
+                    .setSigningKey(AuthorizedConstant.SECRET)
+                    .parseClaimsJws(token).getBody();
+        } catch (Exception e) {
+            log.error(e.getMessage(), e);
+        }
         return claims;
     }
 
@@ -85,9 +94,13 @@ public class AuthorizedService {
         Long currentTime = System.currentTimeMillis();
         Long diff = currentTime - user.getCreated();
         // 5 * 60 * 60 * 1000代表5个小时
-        if (diff > 5 * 60 * 60 * 1000) {
+        if (diff > USER_EXPIRED_TIME) {
             return true;
         }
         return false;
+    }
+
+    public static String getHash(LoginUser loginUser) {
+        return DigestUtils.md5DigestAsHex(String.format("%s_%d", loginUser.getUsername(), loginUser.getCreated()).getBytes());
     }
 }

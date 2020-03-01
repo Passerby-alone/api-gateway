@@ -9,8 +9,8 @@
     <packaging>pom</packaging>
     <version>0.0.1-SNAPSHOT</version>
     <modules>
-        <module>security</module>
         <module>gateway</module>
+        <module>securtity</module>
     </modules>
 
     <name>api-gateway</name>
@@ -36,6 +36,7 @@
         <org.apache.common3.version>3.8.1</org.apache.common3.version>
         <org.apache.common.pool2.version>2.5.0</org.apache.common.pool2.version>
         <spring-cloud-alibaba-dependencies.version>0.2.2.RELEASE</spring-cloud-alibaba-dependencies.version>
+        <lombok.version>1.18.4</lombok.version>
     </properties>
 
     <dependencyManagement>
@@ -91,6 +92,11 @@
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-pool2</artifactId>
             <version>${org.apache.common.pool2.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 

@@ -1,18 +1,31 @@
 package com.my.project.filter;
 
 import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONObject;
 import com.my.project.api.core.ApiResponse;
+import com.my.project.constants.AuthorizedConstant;
+import com.my.project.constants.RedisConstant;
+import com.my.project.constants.UrlPathConstant;
 import com.my.project.domain.entity.LoginUser;
+import com.my.project.security.AuthenticationTokenImpl;
 import com.my.project.security.AuthorizedService;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.reactivestreams.Publisher;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
 import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.core.io.buffer.DataBufferFactory;
+import org.springframework.core.io.buffer.DataBufferUtils;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.http.server.reactive.ServerHttpResponseDecorator;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
@@ -20,7 +33,9 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.io.UnsupportedEncodingException;
-import java.util.Arrays;
+import java.nio.charset.Charset;
+import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @author stranger_alone
@@ -36,12 +51,18 @@ public class SessionGlobalFilter implements GlobalFilter, Ordered {
      * */
     private static final String OPTIONS = "OPTIONS";
     /**
+     * session保存时间
+     * */
+    private static final Long USER_SESSION_TIME = 60 * 60 * 4L;
+    /**
      * 排序过滤的URL地址 login register swagger的api-docs
      * */
-    private static final String[] whiteList = {"/user/login", "/user/register", "/system/v2/api-docs"};
+    private static final String[] whiteList = {"/user/user.login", "/user/register", "/system/v2/api-docs"};
 
     @Autowired
     private AuthorizedService authorizedService;
+    @Autowired
+    private RedisTemplate<String, Object> redisTemplate;
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
@@ -50,10 +71,13 @@ public class SessionGlobalFilter implements GlobalFilter, Ordered {
         String url = exchange.getRequest().getURI().getPath();
         if (OPTIONS.equalsIgnoreCase(request.getMethodValue()) || Arrays.asList(whiteList).contains(url)) {
             log.info("不需要进行Authorized认证的接口：[{}]", url);
+            if (url.contains(UrlPathConstant.LOGIN_PTH)) {
+                return filterLoginSession(exchange, chain);
+            }
             return chain.filter(exchange);
         }
 
-        if (authorizedService.checkAuthorized(request)) {
+        if (!authorizedService.checkAuthorized(request)) {
             return setUnauthorizedResponse(exchange, "Authorized can't null");
         }
 
@@ -73,7 +97,7 @@ public class SessionGlobalFilter implements GlobalFilter, Ordered {
 
         byte[] message = null;
         try {
-            message = JSON.toJSONString(new ApiResponse(String.valueOf(HttpStatus.UNAUTHORIZED.value()), msg)).getBytes("UTF-8");
+            message = JSON.toJSONString(new ApiResponse(HttpStatus.UNAUTHORIZED.value(), msg)).getBytes("UTF-8");
         } catch (UnsupportedEncodingException e) {
             log.error(e.getMessage(), e);
         }
@@ -93,5 +117,73 @@ public class SessionGlobalFilter implements GlobalFilter, Ordered {
             return (LoginUser) authentication.getDetails();
         }
         return null;
+    }
+
+    /**
+     * 登录成功，回调函数，保存session
+     * */
+    private Mono<Void> filterLoginSession(ServerWebExchange exchange, GatewayFilterChain chain) {
+
+        ServerHttpResponse response = exchange.getResponse();
+        DataBufferFactory bufferFactory = response.bufferFactory();
+        ServerHttpResponseDecorator decoratorResponse = new ServerHttpResponseDecorator(response) {
+
+            @Override
+            public Mono<Void> writeWith(Publisher<? extends DataBuffer> dataBuffer) {
+                if (dataBuffer instanceof Flux) {
+                    Flux<? extends DataBuffer> fluxBody = (Flux<? extends DataBuffer>) dataBuffer;
+                    return super.writeWith(fluxBody.map(flux -> {
+
+                        byte[] content = new byte[flux.readableByteCount()];
+                        flux.read(content);
+                        //释放掉内存
+                        DataBufferUtils.release(flux);
+                        String body = new String(content, Charset.forName("UTF-8"));
+                        if (StringUtils.isNotBlank(body)) {
+                            // 获取登录的结果是否是成功的
+                            JSONObject bodyJson = JSON.parseObject(body);
+                            log.info("login接口响应信息：[{}]", JSON.toJSONString(bodyJson));
+                            if (null != bodyJson.get(UrlPathConstant.LOGIN_RESPONSE_STATUS)) {
+
+                                Integer status = (Integer) bodyJson.get(UrlPathConstant.LOGIN_RESPONSE_STATUS);
+                                if (HttpStatus.OK.value() == status) {
+                                    // 生成token
+                                    addAuthentication(exchange, bodyJson);
+                                }
+                            }
+                        }
+                        return bufferFactory.wrap(content);
+                    }));
+                }
+                return super.writeWith(dataBuffer);
+            }
+        };
+        return chain.filter(exchange.mutate().response(decoratorResponse).build());
+    }
+
+
+    private void addAuthentication(ServerWebExchange exchange, JSONObject bodyJson) {
+
+        LoginUser user = JSONObject.parseObject(JSON.toJSONString(bodyJson), LoginUser.class);
+        if (null != user) {
+            String username = user.getUsername();
+            AuthenticationTokenImpl auth = new AuthenticationTokenImpl(user, Collections.emptyList());
+            auth.setDetails(user);
+            ServerHttpResponse response = exchange.getResponse();
+            // 存到redis中
+            redisTemplate.opsForValue().set(RedisConstant.SESSION_REDIS_PREFIX + String.format("%s:%s", username.toLowerCase(), AuthorizedService.getHash(user)),
+                                               user,
+                                               USER_SESSION_TIME,
+                                               TimeUnit.SECONDS);
+
+            Map<String, Object> claims = new HashMap();
+            claims.put(AuthorizedConstant.PRINCIPAL_NAME, username);
+            claims.put("hash", AuthorizedService.getHash(user));
+            String JWT = Jwts.builder().setSubject(username)
+                                        .signWith(SignatureAlgorithm.HS512, AuthorizedConstant.SECRET)
+                                        .setClaims(claims)
+                                        .setExpiration(new Date(System.currentTimeMillis() + 1000 * USER_SESSION_TIME)).compact();
+            response.getHeaders().set(AuthorizedConstant.AUTH_HEADER_NAME, JWT);
+        }
     }
 }
